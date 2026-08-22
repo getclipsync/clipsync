@@ -144,6 +144,9 @@ def _finish_and_show(
         result["srt_path"] = srt_path
 
     st.session_state["last_result"] = result
+    st.session_state["videos_generated_count"] = (
+        st.session_state.get("videos_generated_count", 0) + 1
+    )
     st.session_state["interest_sent"] = False
     st.rerun()
 
@@ -213,14 +216,36 @@ def main():
         ],
     )
 
-    max_free_seconds = st.checkbox(
-        "Simular versión FREE (recortar a 60s)", value=False
-    )
+    st.session_state.setdefault("videos_generated_count", 0)
+
+    def _mostrar_estado_limite():
+        ya_uso = st.session_state["videos_generated_count"] >= 1
+        if ya_uso:
+            st.warning(
+                "Ya usaste tu video de prueba sin límite. A partir de "
+                "ahora, los videos se generan en el plan **Free (60 "
+                "segundos)** — dejanos tu mail en el formulario de más "
+                "abajo para avisarte cuando esté disponible la versión "
+                "Pro sin límite."
+            )
+            with st.expander("Soy yo probando la app (reiniciar contador)"):
+                if st.button("Reiniciar mi contador de prueba"):
+                    st.session_state["videos_generated_count"] = 0
+                    st.rerun()
+        else:
+            st.info(
+                "✨ Este es tu **video de prueba gratis, sin límite de "
+                "duración**. Del segundo en adelante, se generan en el "
+                "plan Free (60 segundos)."
+            )
+        return ya_uso
 
     # -------------------------------------------------------------
     # MODO 1: generar todo desde cero
     # -------------------------------------------------------------
     if modo.startswith("Generar todo"):
+        max_free_seconds = _mostrar_estado_limite()
+
         st.caption(
             "Subí el .txt de prompts de imagen (con timestamps) y el .txt "
             "del guion. La app genera las imágenes, la narración y arma el "
@@ -280,6 +305,8 @@ def main():
     # MODO 2: ya tenés las imágenes y el audio — solo ensamblar
     # -------------------------------------------------------------
     elif modo.startswith("Ya tengo las imágenes"):
+        max_free_seconds = _mostrar_estado_limite()
+
         st.caption(
             "Subí el .txt con los tiempos de cada imagen (mismo formato de "
             "siempre, el texto del prompt no importa acá), las imágenes en "
