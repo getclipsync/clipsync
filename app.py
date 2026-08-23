@@ -38,6 +38,12 @@ from core.parsing import (
 from core.generation import generate_image, generate_audio, concatenate_audio_files
 from core.assembly import build_video
 from core.subtitles import generate_srt
+from core.database import (
+    get_or_create_user,
+    increment_video_count,
+    reset_user,
+    is_disposable_email,
+)
 
 # URL del formulario de Formspree donde llegan los avisos de interés de
 # pago. Gratis hasta 50 envíos/mes.
@@ -71,6 +77,46 @@ def _check_access_code():
             st.rerun()
         else:
             st.error("Código incorrecto.")
+    return False
+
+
+def _check_email_gate():
+    """
+    Pide el mail antes de dejar generar nada. Es lo que reemplaza al
+    contador por sesión de navegador: el uso queda atado a ese mail en
+    Supabase, así que cerrar el navegador, probar en otro navegador o
+    borrar cookies ya no reinicia el contador.
+    """
+    if st.session_state.get("user_email"):
+        return True
+
+    st.subheader("¿Cuál es tu mail?")
+    st.caption(
+        "Lo usamos para llevar la cuenta de tu video de prueba gratis, "
+        "y para avisarte cuando salga la versión paga si te interesa."
+    )
+    email = st.text_input("Mail", key="email_gate_input")
+    if st.button("Continuar", key="email_gate_button"):
+        email = email.strip().lower()
+        if not email or "@" not in email or "." not in email.split("@")[-1]:
+            st.error("Ingresá un mail válido.")
+            return False
+        if is_disposable_email(email):
+            st.error(
+                "Ese dominio de mail temporal/descartable no está "
+                "permitido — usá un mail real."
+            )
+            return False
+
+        try:
+            count = get_or_create_user(email)
+        except Exception as e:
+            st.error(f"No se pudo conectar con la base de datos: {e}")
+            return False
+
+        st.session_state["user_email"] = email
+        st.session_state["videos_generated_count"] = count
+        st.rerun()
     return False
 
 
@@ -144,9 +190,16 @@ def _finish_and_show(
         result["srt_path"] = srt_path
 
     st.session_state["last_result"] = result
-    st.session_state["videos_generated_count"] = (
-        st.session_state.get("videos_generated_count", 0) + 1
-    )
+    try:
+        new_count = increment_video_count(st.session_state["user_email"])
+        st.session_state["videos_generated_count"] = new_count
+    except Exception as e:
+        # Si falla la base de datos, no bloqueamos la entrega del video
+        # ya generado, pero avisamos para no perder el rastro.
+        st.session_state["videos_generated_count"] = (
+            st.session_state.get("videos_generated_count", 0) + 1
+        )
+        st.warning(f"El video se generó bien, pero no se pudo actualizar el contador: {e}")
     st.session_state["interest_sent"] = False
     st.rerun()
 
@@ -205,7 +258,12 @@ def main():
         return
 
     st.title("🎬 ClipSync")
+
+    if not _check_email_gate():
+        return
+
     st.caption("Beta gratis — armá tu video sincronizado sin límite de duración.")
+    st.caption(f"Conectado como: {st.session_state['user_email']}")
 
     modo = st.radio(
         "¿Qué querés hacer?",
@@ -215,8 +273,6 @@ def main():
             "Ya tengo el video — solo generar el archivo de subtítulos (.srt)",
         ],
     )
-
-    st.session_state.setdefault("videos_generated_count", 0)
 
     def _mostrar_estado_limite():
         ya_uso = st.session_state["videos_generated_count"] >= 1
@@ -228,8 +284,9 @@ def main():
                 "abajo para avisarte cuando esté disponible la versión "
                 "Pro sin límite."
             )
-            with st.expander("Soy yo probando la app (reiniciar contador)"):
+            with st.expander("Soy yo probando la app (reiniciar mi contador)"):
                 if st.button("Reiniciar mi contador de prueba"):
+                    reset_user(st.session_state["user_email"])
                     st.session_state["videos_generated_count"] = 0
                     st.rerun()
         else:
