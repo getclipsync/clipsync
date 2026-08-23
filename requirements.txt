@@ -2,3 +2,4 @@ streamlit
 moviepy
 edge-tts
 requests
+supabase
